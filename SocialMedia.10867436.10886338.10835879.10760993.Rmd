@@ -1,0 +1,429 @@
+---
+title: "Analysis of COVID-19 Pandemic Related Tweets"
+author: | 
+  | 10867436
+  | 10886338
+  | 10835879
+  | 10760993
+
+date: "5th December 2023"
+output: beamer_presentation
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# Table of Content
+- Introduction
+- Description of dataset
+- Information about the users
+- Analysis of Tweets Pattern
+- Analysis of Word Usage in Tweets
+- Analysis of Users Sentiment in Tweets
+- Analysis with T-test
+- Limitations of the dataset
+- Conclusion & Recommendations
+- References
+
+# Introduction
+As the world grappled with the challenges posed by the pandemic, social media platforms became a significant avenues for individuals to share their thoughts, concerns, and experiences.
+
+
+These tweets were analysed to provides insights into the sentiments expressed during the unprecedented times of the COVID-19 pandemic.
+
+
+# Description of Dataset
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# Set working directory
+#setwd("C:/Users/adewu/OneDrive - University of Plymouth/Desktop/Math 513/Math_513_Presentation_Dec_7_2023")
+
+# Load the required libraries
+suppressMessages({
+library(tidyverse);
+library(tidytext);
+library(textdata);
+library(igraph);
+library(tm);
+library(ggraph);
+library(devtools);
+library(scales);
+library(ggpubr);
+library(RColorBrewer)
+library(ggwordcloud)
+  })
+
+# Load the dataset in R
+corona_data <- read_csv("Corona_NLP_train.csv", 
+    col_types = cols(TweetAt = col_date(format = "%d/%m/%Y")))
+
+# get dimension of the dataset
+dim_data <- dim(corona_data)
+```
+
+The dataset is made up of tweets that were extracted from Twitter now called `X`.
+
+The dataset contains tweets about the Covid-19 pandemic between the period of March and April 2020 from `r label_comma()(dim_data[1])` users.
+
+It contains information used to identify the users such as their locations, and the time of tweet and their original tweets.
+
+# Information about users
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, results='hide'}
+# Provide summary statistic about unique users
+unique_users <- corona_data %>% 
+                        distinct(UserName) %>% 
+                        nrow()
+unique_location <- corona_data %>% 
+        distinct(Location) %>% nrow()
+```
+
+A total of `r label_comma()(unique_users)` users from `r label_comma()(unique_location)` locations contributed to tweets in the dataset.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# Checking the proportion of the dataset without location data
+missing_percent <- sum(is.na(corona_data$Location))/nrow(corona_data)
+
+# improved the the dataset by recoding countries code to country name
+corona_data_rec <- corona_data %>% mutate(Location_rec = 
+                      recode(Location, "London" = "United Kingdom",  
+                        "USA" = "United States of America", 
+                        "New York, NY" = "United States of America",
+                        "New York" = "United States of America",
+                       "New York City" = "United States of America",
+                       "Atlanta, GA" = "United States of America",
+                       "Chicago, IL" = "United States of America",
+                       "Houston, TX" = "United States of America",
+                       "Los Angeles, CA" = "United States of America",
+                       "UK" = "United Kingdom",
+                       "Washington, DC" = "United States of America",
+                       "Washington, D.C." = "United States of America",
+                       "San Francisco, CA" = "United States of America",
+                       "Boston, MA" = "United States of America",
+                       "Chicago, IL" = "United States of America",
+                       "Toronto, Ontario" = "Canada",
+                       "Austin, TX" = "United States of America",
+                       "Toronto" = "Canada",
+                       "Mumbai" = "India",
+                       "Dallas, TX" = "United States of America",
+                       "London, England" = "United Kingdom",
+                       "United States" = "United States of America",
+                       "California, USA" = "United States of America",
+                       "New York, USA" = "United States of America",
+                       "New Delhi, India" = "India",
+                       "Las Vegas, NV" = "United States of America"
+                    ))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Visualization of the top five locations by tweets count
+corona_data_rec %>%
+  count(Location_rec, sort = TRUE) %>% # count the frequency for each location
+        na.omit()%>% 
+  mutate(Location_rec = reorder(Location_rec, n)) %>% # make sure that locations are ordered according to frequency
+  head(5) %>%
+  ggplot(aes(x = Location_rec, y = n, fill = Location_rec)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() + # flip x and y axes
+  labs(x = "Top 5 Locations",
+       y = "Frequency",
+       title = "Top 5 User Locations in Covid-19 Related Tweets") + 
+  theme(axis.text = element_text(size = 14, color = "black"), 
+        axis.title = element_text(size = 14, color = "black"),
+        title = element_text(size = 16))
+```
+
+
+# Analysis of Tweets Pattern
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Time series visualization to understand the rate of tweets across different times
+# Days with highest number of tweets about corona virus
+corona_data_rec %>%
+  count(TweetAt) %>%
+  ggplot(aes(x=TweetAt, y=n)) +
+  geom_bar(stat="identity", fill="thistle2", colour="black") +
+  theme_bw() +
+  labs(x="Date (day)", y="Frequency",
+       title = "Changes in Tweets Frequency by Day")+
+        theme(axis.title = element_text(size = 15),
+              axis.text = element_text(size = 14),
+              plot.title = element_text(size = 16))+
+        scale_y_continuous(labels = label_comma())
+```
+
+
+# Analysis of Word Usage in Tweets
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# Creating a function for text preprocessing
+cleantweets <- function(text) {
+  text %>%
+    # Remove URLs
+    str_remove_all(" ?(f|ht)(tp)(s?)(://)(.*)[.|/](.*)") %>%
+    # Remove mentions e.g. "@my_account"
+    str_remove_all("@[[:alnum:]_]{4,}") %>%
+    # Remove hashtags
+    str_remove_all("#[[:alnum:]_]+") %>%
+    # Replace "&" character reference with "and"
+    str_replace_all("&amp;","") %>%
+    # Remove punctuation, using a standard character class
+    str_remove_all("[[:punct:]]") %>%
+    # Replace any newline characters with a space
+    str_replace_all("\\\n", " ") %>%
+    # Remove the digit "2"
+    str_remove_all("[:digit:]") %>%
+        # Remove any trailing whitespace around the text
+    str_trim("both") %>%
+    # Make everything lowercase
+    str_to_lower()
+    
+}
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# we are creating a new column `tweet_loc` from our location and storing as character for later use in the analysis.
+corona_data_rec$tweet_loc <- as.character(corona_data_rec$Location_rec)
+
+# Tokenization of text data, `OriginalTweet` in `Corona_data_rec` using clean tweet function
+# cleaning up the Original tweet column with cleantweets function
+corona_data_rec$cleantweet <- cleantweets(corona_data_rec$OriginalTweet)
+
+clean_corona <- corona_data_rec %>%
+  select(UserName, tweet_loc, cleantweet, TweetAt) %>%
+  unnest_tokens(word, cleantweet)
+
+# Define our own stopwords that we don't want to included in our data
+our_stop_word <- data.frame(word = c("covid"))
+
+# remove our own stopwords from the list of words too
+data("stop_words")
+clean_corona_2 <- clean_corona %>%
+        anti_join(stop_words) %>%
+        anti_join(our_stop_word)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, out.width="90%"}
+# Visualizing most frequently used words in the tweets
+plot1 <- clean_corona_2 %>%
+  count(word, sort = TRUE) %>% # count of number of occurencies of each word and sort according to count
+  head(10) %>% # extract top 10 words
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n, fill = "mediumblue")) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(x = "Unique Words",
+       y = "Frequency") +
+  theme(axis.text = element_text(size = 14, color = "black"), 
+        axis.title = element_text(size = 14, color = "black"),
+        title = element_text(size = 12))+
+        scale_y_continuous(labels = label_number(scale = 1e-3,suffix = "k"))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Aggregating data to visualize top words by frequency
+clean_corona_3 <- clean_corona_2 %>%
+  count(word, sort = TRUE) %>% 
+  mutate(freq = n / sum(n))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# Perform With the package wordcloud
+plot2 <- ggwordcloud(clean_corona_3$word, clean_corona_3$freq, 
+               min.freq = 1, 
+               max.words = 100,
+               random.order = FALSE, 
+               colors = brewer.pal(8, "Dark2"), 
+               scale = c(3, 0.5),
+               rot.per = 0.1)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#creating a grouped plot to show wordcloud and bar chart
+figure_4_topwords <- ggarrange(plot1, plot2, ncol = 2, align = "hv",
+                               common.legend = TRUE)
+#adding annotatons to the visual
+annotate_figure(figure_4_topwords,
+        top = text_grob("Most frequently used words in Covid-19 related tweets",
+                        color = "grey51", face = "bold", size = 14))
+```
+
+
+# Analysis of Users Sentiment in Tweets
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, results='hide'}
+# The bing lexicon categorizes words into positive and negative categories in a binary approach.
+# Join sentiment classification to the tweet words
+bing_word_counts <- clean_corona_2 %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, echo=FALSE}
+# Visualizing the 10 most common tweets words for both Negative and Positive words in the corona related tweets displaying the tone of the users sentiments.
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = n), vjust = -0.5, size = 3) +  # Added this line for displaying numbers
+  coord_flip() +
+  coord_flip() +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(title = "Most common Negative and Positive words in Covid-19 Related Tweets",
+       y = "Sentiment",
+       x = NULL) +
+  theme(axis.text = element_text(size = 14, color = "black"), 
+        axis.title = element_text(size = 14, color = "black"),
+        title = element_text(size = 14),
+        strip.text = element_text(size = 14))+
+        scale_y_continuous(labels = label_comma())
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE, results='hide'}
+# Calculating the sentiments score and separating them into `Positive` and `Negative` scores
+corona_sentiment <- clean_corona_2 %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(UserName, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>% # negative and positive sentiment in separate columns
+  mutate(score = positive - negative) # score = net sentiment (positive - negative)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE, results='hide'}
+# working out the mean sentiment score 
+sentiment_means <- corona_sentiment %>% 
+  summarize(mean_score = mean(score))
+```
+
+
+# Analysis of Users Sentiment in Tweets (cont.)
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, echo=FALSE}
+ggplot(corona_sentiment, 
+       aes(x = score)) + # Sentiment score on x-axis
+  geom_bar(fill = "lightgreen", colour = "darkgreen") + # geom_bar will do the tabulation for you :-)
+  geom_vline(aes(xintercept = mean_score), data = sentiment_means) +
+  # Add a vertical line at the mean score, calculated and stored in sentiment_means_nba above
+  geom_text(aes(x = mean_score, 
+                y = Inf, 
+                label = signif(mean_score, 3)), # Show to three significant figures
+            vjust = 2,
+            data = sentiment_means) + 
+        scale_y_continuous(labels = label_comma())+
+  # Add the mean as a number; just moves it down from the top of the plot
+  scale_x_continuous(limits = c(-10,10), breaks = -10:10,  # Specify a suitable integer range for the x-axis
+                     minor_breaks = NULL) + # Show integers; set this to a suitably large range
+  labs(x = "Sentiment Score", y = "Number of tweets",
+       title = paste("Sentiments towards the Corona virus give a mean of", signif(sentiment_means$mean_score, 3)))
+       # Title that gives page name and mean sentiment score, to three significant figures
+       
+```
+
+# Analysis of Users Sentiment in Tweets (cont.)
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, echo=FALSE}
+# we are interested in creating a visualization to show the 10 most common used words from 4 top Location in the corona dataset.
+# get the top 4 Locations from our data frame is named clean_corona_2
+top_locations <- clean_corona_2 %>%
+  filter(!is.na(tweet_loc)) %>%
+  count(tweet_loc, sort = TRUE) %>%
+  top_n(4, n) %>%
+  pull(tweet_loc)
+
+# Create a plot for the top 5 words in each of the top 4 locations
+plot_data <- clean_corona_2 %>%
+  filter(tweet_loc %in% top_locations) %>%
+  count(tweet_loc, word, sort = TRUE) %>%
+  group_by(tweet_loc) %>%
+  top_n(5, n)
+
+ggplot(plot_data, aes(x = reorder(word, n), y = n, fill = word)) +
+  geom_col() +
+  facet_wrap(~tweet_loc, scales = "free_y", ncol = 2) +
+  labs(x = "Words",
+       y = "Frequency",
+       title = "Top 5 Words in Top 4 Locations") +
+  theme(axis.text = element_text(size = 12, color = "black"), 
+        axis.title = element_text(size = 12, color = "black"),
+        title = element_text(size = 14)) +
+  theme(legend.position = "none") +
+  coord_flip()
+
+```
+
+
+# Bigram Analysis of Tweets Text
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE, results='hide', echo=FALSE}
+# we are interested in text analyses that are based on the relationships between two words and two most common used words in this sentiment analysis.
+# this function is to clean the data of all stop words.
+count_bigrams <- function(dataset) {
+  dataset %>%
+    unnest_tokens(paired_words, OriginalTweet, token = "ngrams", n = 2) %>%
+    separate(paired_words, c("word1", "word2"), sep = " ") %>%
+    filter(!word1 %in% stop_words$word) %>%
+    filter(!word2 %in% stop_words$word) %>%
+    count(word1, word2, sort = TRUE)
+}
+
+corona_paired <- count_bigrams(corona_data)
+
+# we still need to get rid of some unwanted words, with a custom stop word remover.
+# Define our own stopwords that we don't want to include in our bigrams
+ourstop_words <- c("https", "t.co")
+
+# Filter out the chosen stop word
+corona_paired_clean <- corona_paired %>%
+  filter(!(word1 %in% ourstop_words) & !(word2 %in% ourstop_words))
+
+# From data frame is named corona_paired_clean
+top_20_bigrams <- corona_paired_clean %>%
+  top_n(20, n)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, echo=FALSE}
+# Create a bubble plot for the top 20 bigrams
+ggraph(top_20_bigrams, layout = "fr") +
+     geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                    arrow = grid::arrow(type = "closed", length = unit(2, "mm")), 
+                    end_cap = circle(1, "mm")) +
+     geom_node_point(color = "lightblue", size = 2) +
+     geom_node_text(aes(label = name), size = 4) +
+     theme_void()
+
+```
+
+# Analysis with T-test
+
+The Independent T-test is a parametric test that is used to find the mean difference in a quantitative variable across a categorical(dichotomous) variable i.e a variable with only two levels or categories. It also follows some other assumptions that data from the two groups must be more than thirty each and the responses must have been randomly selected.
+
+Considering the fact that our data set contains quite a large sample size, there were no quantitative variables in the data set, likewise any categorical(dichotomous) variable with two possible outcome with which we could compare mean differences. Also the data weren't randomly selected and as such a T-test analysis was not applicable in this analysis.
+
+# Limitations of the dataset
+- The dataset was drawn from twitter that does not properly represent the general population.
+
+- The temporal breadth of the dataset might not accurately reflect the emotion across a longer time frame, and it might be especially impacted by certain events that occur only in March and April 2020.
+
+# Conclusion & Recommendations
+During the early phases of the pandemic, people expressed shock, worry, and uncertainty  as evidenced in the sentiment analysis score of -0.6. They also expressed concerns about the virus's capacity to spread, the lack of sufficient information, and its possible effects on daily life and health. A dip in number of tweets were noticed between March 28th & 30th 2022; this may have been due to information overload, or distraction by other events which temporarily diverted focus.
+
+In light of these findings, The following recommendations were proposed
+
+- The government should set up clear and open channels of communication to stop the spread of false information and calm public anxiety. 
+- Results showed the often-used negative terms by people were "panic" and "crisis." They should have confidence in the competence of authorities to handle emergencies, and ensure resources are well distributed.
+
+
+# References
+
+Csárdi, G., & Nepusz, T. (2006). The igraph software package for complex network research. InterJournal, Complex Systems, 1695. <https://igraph.org>
+
+Feinerer, I., Hornik, K., & Meyer, D. (2008). Text Mining Infrastructure in R. Journal of Statistical Software, 25(5), 1-54. <https://www.jstatsoft.org/article/view/v025i05>
+
+Le Pennec E, Slowikowski K (2023). _ggwordcloud: A Word Cloud Geom for 'ggplot2'_. Rpackage version 0.6.1, <https://CRAN.R-project.org/package=ggwordcloud>
+
+Silge, J., & Robinson, D. (2016). tidytext: Text Mining and Analysis Using Tidy Data Principles in R. Journal of Open Source Software, 1(3), 37. <https://joss.theoj.org/papers/10.21105/joss.00037>
+
+Wickham, H. (2019). tidyverse: Easily Install and Load the 'Tidyverse'. R package version 1.3.1. <https://CRAN.R-project.org/package=tidyverse>
