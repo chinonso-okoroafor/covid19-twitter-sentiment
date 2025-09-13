@@ -1,10 +1,6 @@
 ---
 title: "Analysis of COVID-19 Pandemic Related Tweets"
-author: | 
-  | 10867436
-  | 10886338
-  | 10835879
-  | 10760993
+author: ""
 
 date: "5th December 2023"
 output: beamer_presentation
